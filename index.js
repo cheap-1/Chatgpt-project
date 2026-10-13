@@ -18,58 +18,6 @@
   const path = await import('path');
   const ipc = parentPort || process;
 
-  // Cloudflare Turnstile — needs TURNSTILE_SERVER env (ws:// or wss://)
-  let requestTurnstileToken = null;
-  const TURNSTILE_SERVER_URL = process.env.TURNSTILE_SERVER || "";
-  try {
-    if (TURNSTILE_SERVER_URL) {
-      const pathMod = await import("path");
-      const { pathToFileURL } = await import("url");
-      const clientPath = pathMod.join(__dirname, "turnstile-client.js");
-      // CJS require from worker file directory
-      const { createRequire } = await import("module");
-      const requireFromWorker = createRequire(pathToFileURL(pathMod.join(__dirname, "index.js")).href);
-      const tc = requireFromWorker(clientPath);
-      requestTurnstileToken = tc.requestTurnstileToken;
-    }
-  } catch (e) {
-    const errMsg = e && e.message ? e.message : String(e);
-    setTimeout(() => {
-      try {
-        sendParent({ type: "log", id: "turnstile", message: "client load fail: " + errMsg });
-      } catch {}
-    }, 1000);
-  }
-
-  async function fetchTurnstileToken(fields = {}) {
-    if (!requestTurnstileToken) {
-      try {
-        sendParent({
-          type: "log",
-          id: "turnstile",
-          message: "no client (env=" + (TURNSTILE_SERVER_URL ? TURNSTILE_SERVER_URL.slice(0, 32) : "missing") + ")"
-        });
-      } catch {}
-      return null;
-    }
-    try {
-      const res = await requestTurnstileToken({
-        serverUrl: TURNSTILE_SERVER_URL,
-        fields,
-        userAgent: process.env.TURNSTILE_UA || "",
-        solverIdx: parseInt(process.env.TURNSTILE_SOLVER_IDX || "0", 10) || 0,
-        timeoutMs: parseInt(process.env.TURNSTILE_TIMEOUT || "45000", 10) || 45000
-      });
-      return res && res.token ? res.token : null;
-    } catch (e) {
-      try {
-        sendParent({ type: "log", id: "turnstile", message: "token fail: " + (e && e.message) });
-      } catch {}
-      return null;
-    }
-  }
-
-
   const sendParent = function (message) {
     if (parentPort) {
       parentPort.postMessage(message);
@@ -613,6 +561,7 @@
       };
 
       let destroyed = false;
+      let visualFlushInterval = null;
       let destroy = function () {
         if (destroyed) { return }
         log('Destroying instance...')
@@ -622,6 +571,10 @@
           gameSocket = false
         }
         clearInterval(mainInterval)
+        if (visualFlushInterval) {
+          clearInterval(visualFlushInterval);
+          visualFlushInterval = null;
+        }
         if (singInterval) {
           clearInterval(singInterval);
           singInterval = null;
@@ -780,6 +733,29 @@
       let innerHeight = global.window.innerHeight = 500
 
       let st = 2, lx = 0, gd = 1, canvasRef = {}, sr = 1, s = 1;
+      const visualCommands = [];
+      const visualCommandLimit = 12000;
+      const visualValue = (value) => {
+        if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+          return value;
+        }
+        if (Array.isArray(value)) {
+          const items = value.map(visualValue);
+          return items.some((item) => item === undefined) ? undefined : items;
+        }
+        return undefined;
+      };
+      const flushVisualFrame = () => {
+        if (!config.visualize || !visualCommands.length) return;
+        const commands = visualCommands.splice(0, visualCommands.length);
+        sendParent({
+          type: "visual_frame",
+          id: config.id,
+          width: innerWidth,
+          height: innerHeight,
+          commands
+        });
+      };
 
       const g = function () {
         let w = innerWidth;
@@ -798,7 +774,7 @@
         const emptyFunc = () => { };
         const emptyStyle = { setProperty: emptyFunc };
 
-        const simulatedContext2D = {
+        const simulatedContext2D = new Proxy({
           isContextLost: () => false,
 
           fillText: function () {
@@ -912,7 +888,9 @@
 
           measureText: (text) => ({ width: text.length }),
           clearRect: emptyFunc, strokeRect: emptyFunc, fillRect: emptyFunc,
-          save: emptyFunc, translate: emptyFunc, clip: emptyFunc, restore: emptyFunc,
+          save: emptyFunc, translate: emptyFunc, scale: emptyFunc, rotate: emptyFunc,
+          transform: emptyFunc, setTransform: emptyFunc, resetTransform: emptyFunc,
+          clip: emptyFunc, restore: emptyFunc, setLineDash: emptyFunc,
           beginPath: emptyFunc,
           moveTo: function () {
             canvasRef = this.canvas;
@@ -928,10 +906,35 @@
               }
             }
           },
-          lineTo: emptyFunc, rect: emptyFunc,
+          lineTo: emptyFunc, quadraticCurveTo: emptyFunc, bezierCurveTo: emptyFunc,
+          rect: emptyFunc,
           arc: emptyFunc, ellipse: emptyFunc, roundRect: emptyFunc, closePath: emptyFunc,
           fill: emptyFunc, stroke: emptyFunc, strokeText: emptyFunc, drawImage: emptyFunc,
-        };
+        }, {
+          get(context, property, receiver) {
+            const value = Reflect.get(context, property, receiver);
+            if (typeof value !== "function" || property === "measureText" || property === "isContextLost") {
+              return value;
+            }
+            return function (...args) {
+              if (config.visualize && visualCommands.length < visualCommandLimit) {
+                const values = args.map(visualValue);
+                if (values.every((item) => item !== undefined)) {
+                  visualCommands.push(["call", String(property), values]);
+                }
+              }
+              return Reflect.apply(value, receiver, args);
+            };
+          },
+          set(context, property, value, receiver) {
+            const result = Reflect.set(context, property, value, receiver);
+            const safeValue = visualValue(value);
+            if (config.visualize && property !== "canvas" && safeValue !== undefined && visualCommands.length < visualCommandLimit) {
+              visualCommands.push(["set", String(property), safeValue]);
+            }
+            return result;
+          }
+        });
 
         const createElement = function (tag, options) {
           const element = {
@@ -1329,6 +1332,7 @@ async function onJoin() {
   }
 
   statusLog(`joined as ${target.tank || 'basic'}`);
+  sendParent({ type: 'joined', id: config.id, tank: target.tank || config.tank || 'basic' });
 }
 
 const mainInterval = setInterval(function () {
@@ -1338,56 +1342,6 @@ const mainInterval = setInterval(function () {
     if (a) {
           switch (i) {
             case 1: {
-              // Turnstile: must have token before Play when TURNSTILE_SERVER is set
-              if (requestTurnstileToken) {
-                if (!config.__tsToken && !config.__tsPending) {
-                  config.__tsPending = true;
-                  statusLog('turnstile: requesting token...');
-                  sendParent({ type: 'log', id: 'turnstile', message: 'requesting token for bot ' + config.id });
-                  fetchTurnstileToken({
-                    action: process.env.TURNSTILE_ACTION || ""
-                  }).then((tok) => {
-                    config.__tsPending = false;
-                    if (!tok) {
-                      statusLog('turnstile: NO TOKEN');
-                      sendParent({ type: 'log', id: 'turnstile', message: 'NO TOKEN for bot ' + config.id });
-                      return;
-                    }
-                    config.__tsToken = tok;
-                    try {
-                      const doc = global.document;
-                      if (doc) {
-                        let input = doc.querySelector('[name="cf-turnstile-response"]');
-                        if (!input) {
-                          input = doc.createElement('input');
-                          input.type = 'hidden';
-                          input.name = 'cf-turnstile-response';
-                          (doc.body || doc.documentElement).appendChild(input);
-                        }
-                        input.value = tok;
-                      }
-                      global.__turnstileToken = tok;
-                      if (typeof global.turnstileCallback === 'function') {
-                        global.turnstileCallback(tok);
-                      }
-                      if (global.turnstile && typeof global.turnstile.render === 'function') {
-                        /* token already obtained from external solver */
-                      }
-                    } catch (e) {}
-                    statusLog('turnstile: token ok');
-                    sendParent({ type: 'log', id: 'turnstile', message: 'token ok bot ' + config.id + ' ' + tok.slice(0, 16) + '…' });
-                  }).catch((e) => {
-                    config.__tsPending = false;
-                    sendParent({ type: 'log', id: 'turnstile', message: 'token error bot ' + config.id + ': ' + (e && e.message) });
-                  });
-                  break; // wait for next tick
-                }
-                if (config.__tsPending) break; // still waiting
-                if (!config.__tsToken) {
-                  // failed once — still try play so farm is not stuck forever
-                  statusLog('turnstile: playing without token');
-                }
-              }
               setValue(config.name)
               controller.press("Enter")
               log('Play button clicked!', config.name, global.location.hash)
@@ -1657,19 +1611,22 @@ const mainInterval = setInterval(function () {
               block = false
               ignore = false
               global.performance.time += 9000
-              if (typeof a === 'function') a()
+              if (typeof a === 'function') a();
               if (statusRecieved) { i++ }
             }
             died = false
             return
           }
           global.performance.time += 150
-          if (typeof a === 'function') a()
+          if (typeof a === 'function') a();
           if (statusRecieved) {
             i++
           }
         }
       }, 150)
+      if (config.visualize) {
+        visualFlushInterval = setInterval(flushVisualFrame, 150);
+      }
       global.localStorage = global.window.localStorage = {
         setItem: function (i, v) {
           this[i] = v
@@ -1880,25 +1837,12 @@ const mainInterval = setInterval(function () {
       });
     } else if (message.type === 'start') {
       const config = message.config;
-      try {
-        sendParent({
-          type: 'log',
-          id: 'turnstile',
-          message: 'worker start bot=' + config.id + ' client=' + !!requestTurnstileToken + ' env=' + (TURNSTILE_SERVER_URL ? 'yes' : 'no')
-        });
-      } catch {}
       options.token = config.token;
       options.loadFromCache = config.loadFromCache;
       options.cache = config.cache;
       options.arrasCache = config.arrasCache;
       options.wasmCache = config.wasmCache;
 
-      // Token may already be on config from main-process queue
-      if (config.turnstileToken) {
-        config.__tsToken = config.turnstileToken;
-        global.__turnstileToken = config.turnstileToken;
-        sendParent({ type: 'log', id: 'turnstile', message: 'got token from main bot ' + config.id + ' ' + String(config.turnstileToken).slice(0, 16) + '…' });
-      }
       arras.then(function () {
         currentBotInterface = arras.create(config);
       });

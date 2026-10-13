@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Chatgpt-project | Session console</title>
+  <style>
+    :root {
+      font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+      color: #202923;
+      background: #edf1eb;
+      font-synthesis: none;
+      --ink: #202923;
+      --muted: #68746b;
+      --line: #cbd4ca;
+      --paper: #f8faf6;
+      --green: #176c4b;
+      --green-dark: #10553a;
+      --coral: #a33d2a;
+      --gold: #e2b84e;
+    }
+
+    * { box-sizing: border-box; }
+    body { min-width: 320px; min-height: 100vh; margin: 0; }
+    button, input, select { font: inherit; }
+    .shell { width: min(1050px, calc(100% - 40px)); margin: 0 auto; }
+    header { border-bottom: 1px solid var(--line); background: #e5ebe2; }
+    .masthead { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 78px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark { display: grid; width: 34px; height: 34px; place-items: center; background: var(--green); color: white; font-family: Georgia, serif; font-size: 20px; }
+    .eyebrow, .section-label { margin: 0; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 2px 0 0; font-family: Georgia, "Times New Roman", serif; font-size: 22px; font-weight: 500; }
+    .connection { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
+    .lamp { width: 9px; height: 9px; border-radius: 50%; background: #88948a; box-shadow: 0 0 0 3px #d4dbd2; }
+    .connection[data-state="connected"] { color: var(--green-dark); }
+    .connection[data-state="connected"] .lamp { background: #25875e; box-shadow: 0 0 0 3px #bfddc9; }
+    .connection[data-state="error"] { color: var(--coral); }
+    .connection[data-state="error"] .lamp { background: #b84d38; box-shadow: 0 0 0 3px #efd0c8; }
+    main { padding: 42px 0 60px; }
+    .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    .intro h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 34px; font-weight: 500; }
+    .intro p { max-width: 400px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr); border: 1px solid var(--line); background: var(--paper); }
+    .controls { padding: 26px 28px 30px; }
+    .side { padding: 26px 24px; border-left: 1px solid var(--line); background: #f0f4ee; }
+    .section-label { margin-bottom: 20px; }
+    .fields { display: grid; grid-template-columns: 1fr 150px; gap: 18px 16px; }
+    .field { display: grid; gap: 7px; }
+    .field.wide { grid-column: 1 / -1; }
+    .check-field { display: flex; align-items: center; gap: 9px; }
+    .check-field input { width: 16px; min-height: 16px; margin: 0; }
+    label { color: #3e4b41; font-size: 12px; font-weight: 700; }
+    input, select { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #aebbae; border-radius: 3px; background: white; color: var(--ink); }
+    input:focus, select:focus, button:focus-visible { outline: 3px solid #d5ad42; outline-offset: 2px; }
+    .help { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .actions { display: flex; align-items: center; gap: 10px; margin-top: 22px; }
+    button { min-height: 42px; padding: 0 16px; border: 1px solid var(--green); border-radius: 3px; background: var(--green); color: white; font-weight: 700; cursor: pointer; }
+    button:hover:not(:disabled) { background: var(--green-dark); }
+    button.secondary { border-color: #aebbae; background: transparent; color: var(--ink); }
+    button.secondary:hover:not(:disabled) { background: #e8eee6; }
+    button:disabled { opacity: .52; cursor: not-allowed; }
+    .notice { min-height: 21px; margin: 14px 0 0; color: var(--muted); font-size: 13px; }
+    .notice[data-kind="error"] { color: var(--coral); }
+    .metric { padding: 15px 0; border-top: 1px solid var(--line); }
+    .metric:first-of-type { border-top: 0; padding-top: 0; }
+    .metric-name { display: block; color: var(--muted); font-size: 12px; }
+    .metric-value { display: block; margin-top: 3px; font-family: Georgia, "Times New Roman", serif; font-size: 32px; font-variant-numeric: tabular-nums; }
+    .side-note { margin: 20px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .bot-roster { margin-top: 20px; padding-top: 17px; border-top: 1px solid var(--line); }
+    .roster-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .roster-heading h4 { margin: 0; font-size: 13px; }
+    .roster-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .roster-summary { margin: 9px 0 0; color: var(--muted); font-size: 12px; }
+    .bot-list { display: grid; max-height: 360px; overflow: auto; margin: 9px 0 0; padding: 0; list-style: none; }
+    .bot-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid #dce3da; }
+    .bot-id { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .bot-description { display: grid; min-width: 0; gap: 2px; }
+    .bot-name, .bot-tank { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bot-name { font-size: 12px; font-weight: 700; }
+    .bot-tank { color: var(--muted); font-size: 11px; }
+    .bot-state { color: #8a5d13; font-size: 11px; font-weight: 700; }
+    .bot-state[data-state="joined"] { color: var(--green); }
+    .bot-empty { padding: 12px 0; color: var(--muted); font-size: 12px; }
+    .visualizer { margin-top: 20px; padding-top: 17px; border-top: 1px solid var(--line); }
+    .visualizer h4 { margin: 0 0 9px; font-size: 13px; }
+    .visualizer p { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .visualizer canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; background: #111; }
+    footer { padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    @media (max-width: 700px) {
+      .shell { width: min(100% - 28px, 540px); }
+      .masthead { min-height: 68px; }
+      main { padding-top: 30px; }
+      .intro { display: block; }
+      .intro h2 { margin-bottom: 9px; font-size: 29px; }
+      .workspace { grid-template-columns: 1fr; }
+      .side { border-top: 1px solid var(--line); border-left: 0; }
+    }
+    @media (max-width: 430px) {
+      .fields { grid-template-columns: minmax(0, 1fr) 110px; gap: 15px 10px; }
+      .controls, .side { padding: 21px 18px; }
+      .connection { font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="shell masthead">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">C</span>
+        <div><p class="eyebrow">Chatgpt-project</p><h1>Session console</h1></div>
+      </div>
+      <div class="connection" id="connection" data-state="offline" role="status" aria-live="polite">
+        <span class="lamp" aria-hidden="true"></span><span id="connectionText">Disconnected</span>
+      </div>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="intro" aria-labelledby="page-title">
+      <h2 id="page-title">Control room</h2>
+      <p>Connect to this server, enter a room hash, and monitor the live session from your desktop browser.</p>
+    </section>
+    <div class="workspace">
+      <section class="controls" aria-labelledby="controls-title">
+        <h3 class="section-label" id="controls-title">Session setup</h3>
+        <form id="spawnForm">
+          <div class="fields">
+            <div class="field wide">
+              <label for="roomHash">Room hash</label>
+              <input id="roomHash" name="roomHash" type="text" maxlength="256" autocomplete="off" placeholder="Paste the room hash" required>
+            </div>
+            <div class="field">
+              <label for="profile">Tank profile</label>
+              <select id="profile" name="profile">
+                <option value="auto6">Auto 6</option>
+                <option value="basic">Basic</option>
+                <option value="anni">Annihilator</option>
+                <option value="penta">Penta</option>
+                <option value="spike">Spike</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="count">Count</label>
+              <input id="count" name="count" type="number" min="1" max="10000" value="1" required>
+            </div>
+            <div class="field wide">
+              <label for="botName">Display name <span style="font-weight:400;color:#68746b">(optional)</span></label>
+              <input id="botName" name="botName" type="text" maxlength="32" autocomplete="off" placeholder="Leave blank for unnamed">
+            </div>
+            <label class="check-field field wide"><input id="visualizeBot" type="checkbox" checked> Show the bot’s game view (one bot only)</label>
+          </div>
+          <div class="actions">
+            <button id="spawnButton" type="submit" disabled>Spawn session</button>
+            <button id="connectButton" class="secondary" type="button">Connect</button>
+          </div>
+          <p class="notice" id="notice" role="status" aria-live="polite">Connect to the server to enable controls.</p>
+        </form>
+      </section>
+      <aside class="side" aria-labelledby="status-title">
+        <h3 class="section-label" id="status-title">Live status</h3>
+        <div class="metric"><span class="metric-name">Active bots</span><strong class="metric-value" id="activeCount">—</strong></div>
+        <div class="metric"><span class="metric-name">Total spawned</span><strong class="metric-value" id="spawnedCount">—</strong></div>
+        <p class="side-note">Counts update from the server while this page is connected.</p>
+        <section class="bot-roster" aria-labelledby="botRosterTitle">
+          <div class="roster-heading">
+            <h4 id="botRosterTitle">Active bots</h4>
+            <span class="roster-count" id="botRosterCount">0</span>
+          </div>
+          <p class="roster-summary" id="botRosterSummary" role="status" aria-live="polite">No active bots in this session.</p>
+          <ul class="bot-list" id="botList" aria-label="Active bots">
+            <li class="bot-empty">No bots to display.</li>
+          </ul>
+        </section>
+        <section class="visualizer" aria-labelledby="visualizerTitle">
+          <h4 id="visualizerTitle">Bot game view</h4>
+          <p id="visualizerStatus">Enable “Show the bot’s game view” to display the bot’s live screen here.</p>
+          <canvas id="botCanvas" width="500" height="500" aria-label="Live view of the visible bot"></canvas>
+        </section>
+      </aside>
+    </div>
+    <footer>Local control page · Served by this project</footer>
+  </main>
+  <script>
+    (() => {
+      const connection = document.querySelector("#connection");
+      const connectionText = document.querySelector("#connectionText");
+      const connectButton = document.querySelector("#connectButton");
+      const spawnButton = document.querySelector("#spawnButton");
+      const form = document.querySelector("#spawnForm");
+      const notice = document.querySelector("#notice");
+      const visualCanvas = document.querySelector("#botCanvas");
+      const visualContext = visualCanvas.getContext("2d");
+      const visualMethods = new Set(["clearRect", "strokeRect", "fillRect", "save", "translate", "scale", "rotate", "transform", "setTransform", "resetTransform", "clip", "restore", "beginPath", "moveTo", "lineTo", "quadraticCurveTo", "bezierCurveTo", "rect", "arc", "ellipse", "roundRect", "closePath", "fill", "stroke", "fillText", "strokeText", "setLineDash"]);
+      const visualProperties = new Set(["fillStyle", "strokeStyle", "lineWidth", "lineCap", "lineJoin", "miterLimit", "font", "textAlign", "textBaseline", "globalAlpha", "globalCompositeOperation", "shadowBlur", "shadowColor", "shadowOffsetX", "shadowOffsetY", "lineDashOffset"]);
+      let socket = null;
+      let authenticated = false;
+
+      function setConnection(state, text) {
+        connection.dataset.state = state;
+        connectionText.textContent = text;
+        const connected = state === "connected";
+        spawnButton.disabled = !connected;
+        connectButton.textContent = connected ? "Disconnect" : "Connect";
+      }
+
+      function setNotice(text, kind = "info") {
+        notice.textContent = text;
+        notice.dataset.kind = kind;
+      }
+
+      function renderBotList(bots) {
+        const list = document.querySelector("#botList");
+        const count = document.querySelector("#botRosterCount");
+        const summary = document.querySelector("#botRosterSummary");
+        const fragment = document.createDocumentFragment();
+        const rows = Array.isArray(bots) ? bots : [];
+
+        for (const [id, name, tank, status] of rows) {
+          const row = document.createElement("li");
+          row.className = "bot-row";
+          row.setAttribute("role", "listitem");
+
+          const botId = document.createElement("span");
+          botId.className = "bot-id";
+          botId.textContent = `#${id}`;
+
+          const description = document.createElement("span");
+          description.className = "bot-description";
+          const botName = document.createElement("strong");
+          botName.className = "bot-name";
+          botName.textContent = name || `Bot ${id}`;
+          const botTank = document.createElement("span");
+          botTank.className = "bot-tank";
+          botTank.textContent = tank || "basic";
+          description.append(botName, botTank);
+
+          const botState = document.createElement("span");
+          botState.className = "bot-state";
+          botState.textContent = status || "Starting";
+          botState.dataset.state = String(status || "starting").toLowerCase();
+          row.append(botId, description, botState);
+          fragment.append(row);
+        }
+
+        if (!rows.length) {
+          const empty = document.createElement("li");
+          empty.className = "bot-empty";
+          empty.textContent = "No bots to display.";
+          fragment.append(empty);
+        }
+
+        list.replaceChildren(fragment);
+        count.textContent = String(rows.length);
+        summary.textContent = rows.length === 1
+          ? "1 active bot in this session."
+          : `${rows.length.toLocaleString()} active bots in this session.`;
+      }
+
+      function renderVisualFrame(packet) {
+        const width = Math.max(1, Math.min(2000, Number(packet[2]) || 500));
+        const height = Math.max(1, Math.min(2000, Number(packet[3]) || 500));
+        if (visualCanvas.width !== width) visualCanvas.width = width;
+        if (visualCanvas.height !== height) visualCanvas.height = height;
+        visualContext.clearRect(0, 0, width, height);
+        for (const command of packet[4] || []) {
+          if (command[0] === "set" && visualProperties.has(command[1])) {
+            visualContext[command[1]] = command[2];
+          } else if (command[0] === "call" && visualMethods.has(command[1])) {
+            const method = visualContext[command[1]];
+            if (typeof method === "function") {
+              method.apply(visualContext, command[2]);
+            }
+          }
+        }
+        document.querySelector("#visualizerStatus").textContent = "Showing the bot’s live game view.";
+      }
+
+      function encode(value) {
+        const bytes = [];
+        const textEncoder = new TextEncoder();
+        const pushLength = (length, shortBase, marker, width) => {
+          if (length < shortBase) bytes.push(marker | length);
+          else if (width === 1) bytes.push(marker, length);
+          else if (width === 2) bytes.push(marker, length >> 8, length & 255);
+          else bytes.push(marker, length >>> 24, length >>> 16 & 255, length >>> 8 & 255, length & 255);
+        };
+        const write = (item) => {
+          if (Array.isArray(item)) {
+            if (item.length < 16) bytes.push(0x90 | item.length);
+            else { bytes.push(0xdc, item.length >> 8, item.length & 255); }
+            item.forEach(write);
+          } else if (typeof item === "string") {
+            const data = textEncoder.encode(item);
+            if (data.length < 32) bytes.push(0xa0 | data.length);
+            else if (data.length < 256) pushLength(data.length, 0, 0xd9, 1);
+            else if (data.length < 65536) pushLength(data.length, 0, 0xda, 2);
+            else pushLength(data.length, 0, 0xdb, 4);
+            bytes.push(...data);
+          } else if (typeof item === "boolean") bytes.push(item ? 0xc3 : 0xc2);
+          else if (item === null || item === undefined) bytes.push(0xc0);
+          else if (Number.isInteger(item) && item >= 0 && item < 128) bytes.push(item);
+          else if (Number.isInteger(item) && item >= -32 && item < 0) bytes.push(0x100 + item);
+          else if (Number.isInteger(item) && item >= 0 && item < 256) bytes.push(0xcc, item);
+          else if (Number.isInteger(item) && item >= 0 && item < 65536) bytes.push(0xcd, item >> 8, item & 255);
+          else if (Number.isInteger(item) && item >= 0 && item <= 0xffffffff) bytes.push(0xce, item >>> 24, item >>> 16 & 255, item >>> 8 & 255, item & 255);
+          else if (Number.isInteger(item) && item >= -128 && item < 0) bytes.push(0xd0, item & 255);
+          else if (Number.isInteger(item) && item >= -32768 && item < -128) bytes.push(0xd1, item >> 8 & 255, item & 255);
+          else {
+            const buffer = new ArrayBuffer(8);
+            new DataView(buffer).setFloat64(0, Number(item));
+            bytes.push(0xcb, ...new Uint8Array(buffer));
+          }
+        };
+        write(value);
+        return new Uint8Array(bytes);
+      }
+
+      function decode(buffer) {
+        const bytes = new Uint8Array(buffer);
+        const view = new DataView(buffer);
+        const decoder = new TextDecoder();
+        let offset = 0;
+        const read = () => {
+          const marker = bytes[offset++];
+          if (marker <= 0x7f) return marker;
+          if (marker >= 0xe0) return marker - 256;
+          if ((marker & 0xe0) === 0xa0) return decoder.decode(bytes.subarray(offset, offset += marker & 0x1f));
+          if ((marker & 0xf0) === 0x90) return Array.from({ length: marker & 0x0f }, read);
+          let length;
+          switch (marker) {
+            case 0xc0: return null;
+            case 0xc2: return false;
+            case 0xc3: return true;
+            case 0xcc: return bytes[offset++];
+            case 0xcd: length = view.getUint16(offset); offset += 2; return length;
+            case 0xce: length = view.getUint32(offset); offset += 4; return length;
+            case 0xd0: return view.getInt8(offset++);
+            case 0xd1: length = view.getInt16(offset); offset += 2; return length;
+            case 0xd2: length = view.getInt32(offset); offset += 4; return length;
+            case 0xcb: length = view.getFloat64(offset); offset += 8; return length;
+            case 0xd9: length = bytes[offset++]; break;
+            case 0xda: length = view.getUint16(offset); offset += 2; break;
+            case 0xdb: length = view.getUint32(offset); offset += 4; break;
+            case 0xdc: length = view.getUint16(offset); offset += 2; return Array.from({ length }, read);
+            case 0xdd: length = view.getUint32(offset); offset += 4; return Array.from({ length }, read);
+            default: throw new Error("Unsupported server packet");
+          }
+          const value = decoder.decode(bytes.subarray(offset, offset + length));
+          offset += length;
+          return value;
+        };
+        return read();
+      }
+
+      function send(packet) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Not connected");
+        socket.send(encode(packet));
+      }
+
+      function connect() {
+        if (socket && socket.readyState < WebSocket.CLOSING) {
+          socket.close();
+          return;
+        }
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        socket = new WebSocket(`${protocol}//${location.host}`);
+        socket.binaryType = "arraybuffer";
+        authenticated = false;
+        setConnection("offline", "Connecting…");
+        setNotice("Opening a control connection…");
+        socket.addEventListener("open", () => {
+          try { send(["M", 72011]); }
+          catch (error) { setNotice(error.message, "error"); }
+        });
+        socket.addEventListener("message", (event) => {
+          try {
+            const packet = decode(event.data);
+            if (packet[0] === "M" && !authenticated) {
+              send(["C", packet[1] ^ 845]);
+              authenticated = true;
+              setConnection("connected", "Connected");
+              setNotice("Connected. Enter a room hash to start a session.");
+            } else if (packet[0] === "N") {
+              document.querySelector("#activeCount").textContent = Number(packet[1] || 0).toLocaleString();
+              document.querySelector("#spawnedCount").textContent = Number(packet[2] || 0).toLocaleString();
+            } else if (packet[0] === "L") {
+              renderBotList(packet[1]);
+            } else if (packet[0] === "V") {
+              renderVisualFrame(packet);
+            } else if (packet[0] === "E") {
+              setNotice(String(packet[1] || "The request could not be started."), "error");
+            }
+          } catch (error) {
+            setNotice(`Could not read server response: ${error.message}`, "error");
+          }
+        });
+        socket.addEventListener("close", () => {
+          authenticated = false;
+          setConnection("offline", "Disconnected");
+          setNotice("Disconnected from the server.");
+          renderBotList([]);
+          visualContext.clearRect(0, 0, visualCanvas.width, visualCanvas.height);
+          document.querySelector("#visualizerStatus").textContent = "Enable “Show the bot’s game view” to display the bot’s live screen here.";
+        });
+        socket.addEventListener("error", () => {
+          setConnection("error", "Connection error");
+          setNotice("Could not connect. Confirm the server is running and reload this page.", "error");
+        });
+      }
+
+      connectButton.addEventListener("click", connect);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!authenticated) return;
+        const roomHash = document.querySelector("#roomHash").value.trim();
+        const count = Number(document.querySelector("#count").value);
+        const botName = document.querySelector("#botName").value.trim();
+        const visualize = document.querySelector("#visualizeBot").checked;
+        if (!roomHash || !Number.isInteger(count) || count < 1 || count > 10000) {
+          setNotice("Enter a room hash and a count between 1 and 10,000.", "error");
+          return;
+        }
+        if (visualize && count !== 1) {
+          setNotice("Visible mode supports one bot per request. Set count to 1 or turn off Show the bot’s game view.", "error");
+          return;
+        }
+        if (visualize) {
+          visualContext.clearRect(0, 0, visualCanvas.width, visualCanvas.height);
+          document.querySelector("#visualizerStatus").textContent = "Waiting for the bot to join and draw its game view…";
+        }
+        try {
+          send(["Z", document.querySelector("#profile").value]);
+          send(["F", roomHash, count, botName, "", visualize]);
+          setNotice(`Session request sent for ${count.toLocaleString()} bot${count === 1 ? "" : "s"}.`);
+        } catch (error) {
+          setNotice(`Could not send session request: ${error.message}`, "error");
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

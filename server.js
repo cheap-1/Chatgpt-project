@@ -277,9 +277,45 @@
         } catch {}
     }
 
+    function pushLiveBotList(session, packetFn) {
+        if (!session.botRecords || typeof packetFn !== "function") return;
+        const bots = [...session.botRecords.values()]
+            .sort((a, b) => a.id - b.id)
+            .map(({ id, name, tank, status }) => [id, name, tank, status]);
+        packetFn("L", bots);
+    }
+
+    function queueLiveBotList(session) {
+        if (!session.ws || session.botListTimer) return;
+        session.botListTimer = setTimeout(() => {
+            session.botListTimer = null;
+            if (!session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+            try {
+                pushLiveBotList(session, (...args) => session.ws.send(pack(args)));
+            } catch {}
+        }, 100);
+    }
+
     const server = http.createServer((req, res) => {
-        res.writeHead(426, { "Content-Type": "text/plain" });
-        res.end("lll elk ez big fat noob");
+        const requestUrl = new URL(req.url, "http://localhost");
+
+        if (req.method === "GET" && ["/", "/index.html"].includes(requestUrl.pathname)) {
+            try {
+                const page = fs.readFileSync(path.join(__dirname, "public", "index.html"));
+                res.writeHead(200, {
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-store"
+                });
+                res.end(page);
+            } catch {
+                res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+                res.end("The control page could not be loaded.");
+            }
+            return;
+        }
+
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Not found");
     });
 
     function randint(a, b) {
@@ -372,8 +408,17 @@
                     worker.botIds.splice(idx, 1);
                 }
 
+                session.botRecords.delete(message.id);
+                queueLiveBotList(session);
                 worker.activeBots = Math.max(0, worker.activeBots - 1);
                 activeBotCount = Math.max(0, activeBotCount - 1);
+            } else if (message.type === "joined") {
+                const bot = session.botRecords.get(message.id);
+                if (bot) {
+                    bot.status = "Joined";
+                    bot.tank = message.tank || bot.tank;
+                    queueLiveBotList(session);
+                }
             } else if (message.type === "hash_update" && message.hash) {
                 worker.resolvedHash = message.hash;
 
@@ -386,16 +431,27 @@
                         } catch {}
                     }
                 }
+            } else if (message.type === "visual_frame" && session.visualize && message.id === session.visualBotId) {
+                if (session.ws && session.ws.readyState === WebSocket.OPEN && session.ws.bufferedAmount < 2_000_000) {
+                    try {
+                        session.ws.send(pack(["V", message.id, message.width, message.height, message.commands]));
+                    } catch (error) {
+                        rawLog(`[visual] frame send failed: ${error.message}`);
+                    }
+                }
             } else if (message.type === "log") {
                 const id = message.id || "?";
                 const msg = message.message || "";
-                if (id === "turnstile" || process.env.ARRAS_VERBOSE_LOGS === "1") {
+                if (process.env.ARRAS_VERBOSE_LOGS === "1") {
                     rawLog(`[${id}] ${msg}`);
                 }
             }
         });
 
         worker.on("exit", () => {
+            for (const id of worker.botIds) session.botRecords.delete(id);
+            queueLiveBotList(session);
+
             let idx = session.workers.indexOf(worker);
 
             if (idx !== -1) {
@@ -459,60 +515,6 @@
     }
 
 
-    // Central Turnstile queue — avoids 50 workers hammering 3 browser solvers
-    let tsRequestToken = null;
-    let tsInFlight = 0;
-    const tsWait = [];
-    const TS_MAX = Math.max(1, parseInt(process.env.TURNSTILE_CONCURRENCY || "3", 10) || 3);
-    try {
-        if (process.env.TURNSTILE_SERVER) {
-            tsRequestToken = require("./turnstile-client.js").requestTurnstileToken;
-        }
-    } catch (e) {
-        rawLog(`[turnstile] main client load fail: ${e.message}`);
-    }
-
-    function tsPump() {
-        while (tsRequestToken && tsInFlight < TS_MAX && tsWait.length) {
-            const job = tsWait.shift();
-            tsInFlight++;
-            tsRequestToken({
-                serverUrl: process.env.TURNSTILE_SERVER,
-                timeoutMs: parseInt(process.env.TURNSTILE_TIMEOUT || "90000", 10) || 90000
-            })
-                .then((r) => {
-                    tsInFlight--;
-                    job.resolve(r && r.token ? r.token : null);
-                    tsPump();
-                })
-                .catch((e) => {
-                    tsInFlight--;
-                    rawLog(`[turnstile] ${e.message}`);
-                    if (job.tries < 6 && /no solvers/i.test(String(e.message || ""))) {
-                        job.tries++;
-                        setTimeout(() => {
-                            tsWait.push(job);
-                            tsPump();
-                        }, 2000 + job.tries * 400);
-                    } else {
-                        job.resolve(null);
-                    }
-                    tsPump();
-                });
-        }
-    }
-
-    function acquireTurnstileToken() {
-        if (!tsRequestToken) return Promise.resolve(null);
-        return new Promise((resolve) => {
-            tsWait.push({ resolve, tries: 0 });
-            if (tsWait.length === 1 || tsWait.length % 10 === 0) {
-                rawLog(`[turnstile] queue=${tsWait.length} inflight=${tsInFlight}/${TS_MAX}`);
-            }
-            tsPump();
-        });
-    }
-
     function spawnBotNow(session, hash, botName, isDefender) {
         // Global farm cap — an "#F 1500" style request breaks out here instead
         // of silently spawning past the target.
@@ -526,6 +528,9 @@
 
         const worker = acquireWorker(session, isDefender);
         const botId = session.nextBotId++;
+        if (session.visualize && session.visualBotId === null) {
+            session.visualBotId = botId;
+        }
 
         worker.botId = botId;
         worker.botIds.push(botId);
@@ -538,6 +543,14 @@
             session.tankIdx =
                 (session.tankIdx + 1) % session.tanks.length;
         }
+
+        session.botRecords.set(botId, {
+            id: botId,
+            name: botName || "",
+            tank: String(selectedTank || "basic"),
+            status: "Starting"
+        });
+        queueLiveBotList(session);
 
         const rawHash = String(hash || "").replace(/^#/, "");
 
@@ -598,30 +611,21 @@
                 arrasCache: arrasScriptCache,
                 wasmCache: arrasWasmCache,
                 teamColor: session.teamColor,
-                turnstileToken: null
+                visualize: session.visualize && botId === session.visualBotId
             };
 
-        // Queue token on main thread (max TS_MAX concurrent), then start bot
-        acquireTurnstileToken().then((tok) => {
-            if (tok) {
-                startConfig.turnstileToken = tok;
-                rawLog(`[turnstile] token for bot ${botId}: ${tok.slice(0, 14)}…`);
-            } else if (process.env.TURNSTILE_SERVER) {
-                rawLog(`[turnstile] no token for bot ${botId} — starting anyway`);
+        try {
+            worker.send({ type: "start", config: startConfig });
+            if (session.lastA) {
+                worker.send(
+                    isDefender
+                        ? session.lastA.defenderPayload
+                        : session.lastA.payload
+                );
             }
-            try {
-                worker.send({ type: "start", config: startConfig });
-                if (session.lastA) {
-                    worker.send(
-                        isDefender
-                            ? session.lastA.defenderPayload
-                            : session.lastA.payload
-                    );
-                }
-            } catch (e) {
-                rawLog(`[turnstile] start send fail bot ${botId}: ${e.message}`);
-            }
-        });
+        } catch (e) {
+            rawLog(`[spawn] start send fail bot ${botId}: ${e.message}`);
+        }
 
         totalSpawned++;
         activeBotCount++;
@@ -1332,6 +1336,11 @@
 
                     teamColor: null,
 
+                    botRecords: new Map(),
+
+                    visualize: false,
+                    visualBotId: null,
+
                     ws: null
                 });
             }
@@ -1405,6 +1414,7 @@
 
                                     // Live bot count → controller (sums across workflows on client)
                                     pushLiveBotCount(session, packet);
+                                    pushLiveBotList(session, packet);
                                     if (session._liveStatsTimer) {
                                         clearInterval(session._liveStatsTimer);
                                     }
@@ -1604,6 +1614,14 @@
                                             10000
                                         );
 
+                                    const visualize = data[4] === true;
+                                    if (visualize && count !== 1) {
+                                        packet("E", "Visible mode supports one bot per request. Set count to 1 or turn off Show bot.");
+                                        break;
+                                    }
+                                    session.visualize = visualize;
+                                    session.visualBotId = null;
+
                                     // Optional build on F: data[3] = "0/4/3/8/8/9/7/4"
                                     {
                                         const buildRaw = data[3];
@@ -1622,6 +1640,10 @@
                                         count,
                                         false
                                     );
+                                    if (visualize) {
+                                        const latestBot = [...session.botRecords.keys()].pop();
+                                        session.visualBotId = latestBot ?? null;
+                                    }
                                     pushLiveBotCount(session, packet);
                                 }
 
@@ -1759,6 +1781,9 @@
                                     w.botIds = [];
                                     w.activeBots = 0;
                                 }
+
+                                session.botRecords.clear();
+                                queueLiveBotList(session);
 
                                 session.workers = [];
 
@@ -2214,19 +2239,6 @@
         process.env.PORT || 8082;
 
     
-    // Optional Turnstile token server (Lucrehulk protocol). GUI solvers run elsewhere.
-    const TURNSTILE_SERVER = process.env.TURNSTILE_SERVER || "";
-    if (TURNSTILE_SERVER) {
-        try {
-            const { getAvailableSolvers } = require("./turnstile-client.js");
-            getAvailableSolvers(TURNSTILE_SERVER)
-                .then((n) => rawLog(`[turnstile] server ${TURNSTILE_SERVER} — ${n} solver(s) available`))
-                .catch((e) => rawLog(`[turnstile] cannot reach ${TURNSTILE_SERVER}: ${e.message}`));
-        } catch (e) {
-            rawLog(`[turnstile] client load failed: ${e.message}`);
-        }
-    }
-
 server.listen(port, async () => {
         const codespaceName = process.env.CODESPACE_NAME;
         const domain = process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN || "app.github.dev";
